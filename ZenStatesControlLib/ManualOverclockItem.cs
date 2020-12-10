@@ -22,20 +22,25 @@ namespace ZenStates.Components
             }
         }
 
+
         private void PopulateCoreList(ComboBox.ObjectCollection l)
         {   
             l.Clear();
 
-            
+            int coreNum = 0;
 
             for (int i = 0; i < Cores; ++i)
             {
-                int ccd = i / Constants.CCD_SIZE;
-                int ccx = i / coresInCcx - CcxInCcd * ccd;
-                int core = i % coresInCcx;
+                bool enabled = ((~coreDisableMap >> i) & 1) == 1;
+                if (enabled)
+                {
+                    int ccd = i / Constants.CCD_SIZE;
+                    int ccx = i / coresInCcx - CcxInCcd * ccd;
+                    int core = i % coresInCcx;
 
-                Console.WriteLine($"ccd: {ccd}, ccx: {ccx}, core: {core}");
-                l.Add(new CoreListItem(ccd, ccx, core, string.Format("Core {0}", i)));
+                    Console.WriteLine($"ccd: {ccd}, ccx: {ccx}, core: {core}");
+                    l.Add(new CoreListItem(ccd, ccx, core, string.Format("Core {0}", coreNum++)));
+                }
             }
 
             l.Add("All Cores");
@@ -98,6 +103,7 @@ namespace ZenStates.Components
         public event EventHandler ProchotClicked;
 
         #region Properties
+        public uint coreDisableMap { get; set; }
         public int CcxInCcd { get; set; }
 
         public double Multi
@@ -125,7 +131,7 @@ namespace ZenStates.Components
                     coresInCcx = Constants.CCD_SIZE / CcxInCcd;
                 }
                 PopulateCoreList(comboBoxCore.Items);
-                comboBoxCore.SelectedIndex = value;
+                comboBoxCore.SelectedIndex = comboBoxCore.Items.Count - 1;
 
                 if (value > 0)
                 {
@@ -133,6 +139,7 @@ namespace ZenStates.Components
                 }
             }
         }
+
         public int SelectedCoreIndex
         {
             get => comboBoxCore.SelectedIndex;

@@ -343,6 +343,7 @@ namespace ZenStates
             manualOverclockItem.Vid = GetCurrentVid(ocmode);
             manualOverclockItem.Multi = GetCurrentMulti(ocmode);
             manualOverclockItem.ProchotEnabled = cpu.IsProchotEnabled();
+            manualOverclockItem.coreDisableMap = cpu.info.coreDisableMap;
             manualOverclockItem.CcxInCcd = cpu.info.family == Cpu.Family.FAMILY_19H ? 1 : 2;
             manualOverclockItem.Cores = (int)cpu.info.physicalCores; // SI.FusedCoreCount;
         }
@@ -687,8 +688,9 @@ namespace ZenStates
                     pb4_eax |= 0x10;
                     break;
                 case PerfBias.SuperPi:
-                    pb2_eax |= (1 & 0x1F) << 18;
+                    //pb2_eax |= (1 & 0x1F) << 18;
                     pb3_eax |= (9 & 0x7);
+
                     break;
                 case PerfBias.Auto:
                 default:
@@ -696,13 +698,105 @@ namespace ZenStates
             }
 
             // Rewrite
-            for (int i = 0; i < SI.Threads; i++)
+            if (!cpu.WriteMsr(MSR_PERFBIAS1, pb1_eax, pb1_edx)) return false;
+            if (!cpu.WriteMsr(MSR_PERFBIAS2, pb2_eax, pb2_edx)) return false;
+            if (!cpu.WriteMsr(MSR_PERFBIAS3, pb3_eax, pb3_edx)) return false;
+            if (!cpu.WriteMsr(MSR_PERFBIAS4, pb4_eax, pb4_edx)) return false;
+            if (!cpu.WriteMsr(MSR_PERFBIAS5, pb5_eax, pb5_edx)) return false;
+
+
+            if (pb == PerfBias.SuperPi)
             {
-                if (!cpu.WriteMsr(MSR_PERFBIAS1, pb1_eax, pb1_edx)) return false;
-                if (!cpu.WriteMsr(MSR_PERFBIAS2, pb2_eax, pb2_edx)) return false;
-                if (!cpu.WriteMsr(MSR_PERFBIAS3, pb3_eax, pb3_edx)) return false;
-                if (!cpu.WriteMsr(MSR_PERFBIAS4, pb4_eax, pb4_edx)) return false;
-                if (!cpu.WriteMsr(MSR_PERFBIAS5, pb5_eax, pb5_edx)) return false;
+                // Conditioner
+                uint eax = 0; uint edx = 0;
+
+                // NRAC; bit 7; 0 -> enabled, 1 -> disabled
+                cpu.Ols.Rdmsr(0xC001102D, ref eax, ref edx);
+                uint nrac = cpu.utils.GetBits(eax, 7, 1);
+
+                MessageBox.Show(nrac == 1 ? "NRAC Disabled" : "NRAC Enabled");
+
+                //if (nrac == 0)
+                {
+                    // Set it to Disabled (1)
+                    eax = cpu.utils.SetBits(eax, 7, 1, 0x1);
+                    cpu.WriteMsr(0xC001102D, eax, edx);
+                }
+
+                // TBM Activation; bit 22; 1 -> disabled, 0 -> enabled
+                cpu.Ols.Rdmsr(0xC0011029, ref eax, ref edx);
+                uint tbm = cpu.utils.GetBits(eax, 22, 1);
+                MessageBox.Show(tbm == 1 ? "TBM Disabled" : "TBM Enabled");
+
+                //if (tbm == 1)
+                {
+                    // MSRC001_1029 Decode Configuration (DE_CFG)
+                    // Set it to Enabled (0)
+                    eax = cpu.utils.SetBits(eax, 22, 1, 0x0);
+                    cpu.WriteMsr(0xC0011029, eax, edx);
+
+                    // MSRC001_1005 Extended CPUID Features (ExtFeatures)
+                    // [53] TBM
+                    cpu.Ols.Rdmsr(0xC0011005, ref eax, ref edx);
+                    edx = cpu.utils.SetBits(edx, 21, 1, 0x1);
+                    cpu.WriteMsr(0xC0011005, eax, edx);
+                }
+
+                // Stack; bit 15; 0 -> disabled, 1 -> enabled
+                cpu.Ols.Rdmsr(0xC0011000, ref eax, ref edx);
+                uint stack = cpu.utils.GetBits(eax, 15, 1);
+                MessageBox.Show(stack == 0 ? "Stack Disabled" : "Stack Enabled");
+
+                //if (stack == 0)
+                {
+                    // Set it to Enabled (1)
+                    eax = cpu.utils.SetBits(eax, 15, 1, 0x1);
+                    cpu.WriteMsr(0xC0011000, eax, edx);
+
+                    // MSRC001_1021 Instruction Cache Configuration (IC_CFG)
+                    // [4:1] DisIcWayFilter: disable IC way access filter - 0xF (disable)
+                    // [39] DisLoopPredictor = 1
+                    /*
+                    cpu.Ols.Rdmsr(0xC0011021, ref eax, ref edx);
+                    eax = cpu.utils.SetBits(eax, 1, 4, 0xF);
+                    edx = cpu.utils.SetBits(edx, 7, 1, 0x1);
+                    cpu.WriteMsr(0xC0011021, eax, edx);
+                    */
+
+                    // MSRC001_1023 Combined Unit Configuration (CU_CFG)
+                    // [22:19] L2FirstLockedWay: first L2 way locked. - 0xF (Way 15 locked)
+                    // [23] L2WayLock: L2 way lock enable
+                    // [56] Reserved
+                    cpu.Ols.Rdmsr(0xC0011023, ref eax, ref edx);
+                    eax = cpu.utils.SetBits(eax, 19, 4, 0xF);
+                    // ? eax = cpu.utils.SetBits(eax, 23, 1, 0x1);
+                    edx = cpu.utils.SetBits(edx, 24, 1, 0x1);
+                    cpu.WriteMsr(0xC0011023, eax, edx);
+
+                    // MSRC001_1028 Floating Point Configuration (FP_CFG)
+                    // [44:42] - DiDtCfg4
+                    // [41] - DiDtCfg5
+                    // [40] - DiDtCfg3
+                    cpu.Ols.Rdmsr(0xC0011028, ref eax, ref edx);
+                    edx = cpu.utils.SetBits(edx, 8, 5, 0x1A);
+                    // ? edx = cpu.utils.SetBits(edx, 8, 8, 0xAA);
+                    cpu.WriteMsr(0xC0011028, eax, edx);
+
+                    // MSRC001_1029 Decode Configuration (DE_CFG)
+                    // [10] ResyncPredSingleDispDis = 0
+                    /*cpu.Ols.Rdmsr(0xC0011029, ref eax, ref edx);
+                    eax &= 0xFBFF;
+                    cpu.WriteMsr(0xC0011029, eax, edx);*/
+
+                    // MSRC001_102B Combined Unit Configuration 3 (CU_CFG3)
+                    // [20:21] PfcStrideMul = 01b 4
+                    // [22] PfcDoubleStride = 1
+                    // [41:23] Reserved
+                    cpu.Ols.Rdmsr(0xC001102B, ref eax, ref edx);
+                    eax = cpu.utils.SetBits(eax, 20, 8, 0x55);
+                    edx &= 0xFBFF;
+                    cpu.WriteMsr(0xC001102B, eax, edx);
+                }
             }
 
             return true;
@@ -858,11 +952,8 @@ namespace ZenStates
         {
             CheckBox cb = sender as CheckBox;
             int cores = SI.Threads;
-            int step = SI.NumCoresInCCX;
+            int step = SI.SMT ? SI.NumCoresInCCX * 2 : SI.NumCoresInCCX;
             int index = 0;
-
-            if (SI.SMT)
-                step *= 2;
 
             double[] ccx_frequencies = new double[SI.CCXCount];
 
